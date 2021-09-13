@@ -1,0 +1,31 @@
+apply plugin: 'com.android.library'
+
+android {
+    compileSdkVersion rootProject.ext.android.compileSdkVersion
+    buildToolsVersion rootProject.ext.android.buildToolsVersion
+
+    defaultConfig {
+        minSdkVersion rootProject.ext.android.minSdkVersion
+        targetSdkVersion rootProject.ext.android.targetSdkVersion
+        versionCode rootProject.ext.versionControl.versionCode
+        versionName rootProject.ext.versionControl.versonName
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+dependencies {
+    implementation fileTree(dir: 'libs', include: ['*.jar'])
+}
+
+task makeAAR(type: Copy) {
+    from('build/outputs/aar/')
+    into('build/aarFloder/')
+    include('FastBluetoothLib-release.aar')
+    rename ('FastBluetoothLib-release.aar', 'FastBluetooth-' + rootProject.ext.versionControl.versonName + '.aar' )
+}
+makeAAR.dependsOn(build)
