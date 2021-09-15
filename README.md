@@ -1,10 +1,8 @@
-![效果图](https://github.com/Jasonchenlijian/FastBle/raw/master/preview/fastble_poster.png)
+# 项目编辑中。。。
 
-Thanks to the logo designed by [anharismail](https://github.com/anharismail)
-
-
-# FastBle
-Android Bluetooth Low Energy
+# FastBluetooth
+Android Classic Bluetooth Fast Development Framework. 
+基于Serial Port Profile （SPP）的蓝牙串口通信快速开发框架。
 
 - Filtering, scanning, linking, reading, writing, notification subscription and cancellation in a simple way.
 - Supports acquiring signal strength and setting the maximum transmission unit.
