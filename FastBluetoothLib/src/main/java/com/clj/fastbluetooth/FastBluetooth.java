@@ -55,18 +55,17 @@ public class FastBluetooth {
         scan(null, null, -1, false, callback);
     }
 
-    public void scanWithParams(String[] names, String[] macs, long timeout,
+    public void scanWithParams(String[] names, String mac, long timeout,
                                BluetoothScanCallback callback) {
-        scan(names, macs, timeout, false, callback);
-
+        scan(names, mac, timeout, false, callback);
     }
 
-    public void scanAndConnect(String[] names, String[] macs, long timeout,
+    public void scanAndConnect(String[] names, String mac, long timeout,
                                BluetoothScanCallback callback) {
-        scan(names, macs, timeout, true, callback);
+        scan(names, mac, timeout, true, callback);
     }
 
-    private void scan(String[] names, String[] macs, long timeout,
+    private void scan(String[] names, String mac, long timeout,
                       boolean autoConnect, BluetoothScanCallback callback) {
         if (callback == null) {
             throw new IllegalArgumentException("BluetoothScanCallback can not be Null!");
@@ -78,7 +77,7 @@ public class FastBluetooth {
             return;
         }
 
-        BluetoothScanner.getInstance().scan(names, macs, timeout, autoConnect, callback);
+        BluetoothScanner.getInstance().scan(names, mac, timeout, autoConnect, callback);
     }
 
 
