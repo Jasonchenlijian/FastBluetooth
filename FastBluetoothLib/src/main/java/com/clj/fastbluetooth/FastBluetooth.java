@@ -6,8 +6,10 @@ import android.bluetooth.BluetoothAdapter;
 import android.content.Context;
 import android.content.pm.PackageManager;
 
+import com.clj.fastbluetooth.callback.BluetoothReadCallback;
 import com.clj.fastbluetooth.callback.BluetoothScanCallback;
-import com.clj.fastbluetooth.scan.BluetoothScanner;
+import com.clj.fastbluetooth.callback.BluetoothWriteCallback;
+import com.clj.fastbluetooth.core.BluetoothController;
 import com.clj.fastbluetooth.utils.BluetoothLog;
 
 public class FastBluetooth {
@@ -55,9 +57,19 @@ public class FastBluetooth {
         scan(null, null, -1, false, callback);
     }
 
+    public void scanWithParams(String[] names, String mac,
+                               BluetoothScanCallback callback) {
+        scan(names, mac, -1, false, callback);
+    }
+
     public void scanWithParams(String[] names, String mac, long timeout,
                                BluetoothScanCallback callback) {
         scan(names, mac, timeout, false, callback);
+    }
+
+    public void scanAndConnect(String[] names, String mac,
+                               BluetoothScanCallback callback) {
+        scan(names, mac, -1, true, callback);
     }
 
     public void scanAndConnect(String[] names, String mac, long timeout,
@@ -77,7 +89,23 @@ public class FastBluetooth {
             return;
         }
 
-        BluetoothScanner.getInstance().scan(names, mac, timeout, autoConnect, callback);
+        BluetoothController.getInstance().scan(names, mac, timeout, autoConnect, callback);
+    }
+
+    public void write(byte[] command, BluetoothWriteCallback callback) {
+        BluetoothController.getInstance().write(command, callback);
+    }
+
+    public void openDataRead(BluetoothReadCallback callback) {
+        BluetoothController.getInstance().read(callback);
+    }
+
+    public void stopDataRead(){
+        BluetoothController.getInstance().stopDataRead();
+    }
+
+    public void destroy() {
+
     }
 
 

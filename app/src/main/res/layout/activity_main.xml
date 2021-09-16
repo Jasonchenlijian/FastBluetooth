@@ -60,7 +60,7 @@
             android:paddingRight="5dp"
             android:textSize="13sp" />
 
-        <Switch
+        <androidx.appcompat.widget.SwitchCompat
             android:id="@+id/sw_auto"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -103,6 +103,27 @@
             android:visibility="invisible" />
 
     </RelativeLayout>
+
+    <Button
+        android:id="@+id/btn_write"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_centerInParent="true"
+        android:text="写" />
+
+    <Button
+        android:id="@+id/btn_read"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_centerInParent="true"
+        android:text="读" />
+
+    <Button
+        android:id="@+id/btn_stop"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_centerInParent="true"
+        android:text="取消读" />
 
     <ListView
         android:id="@+id/list_device"

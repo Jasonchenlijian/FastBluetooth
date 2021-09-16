@@ -1,4 +1,4 @@
-package com.clj.fastbluetooth.scan;
+package com.clj.fastbluetooth.core;
 
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
@@ -13,10 +13,18 @@ import android.os.Message;
 import android.text.TextUtils;
 
 import com.clj.fastbluetooth.FastBluetooth;
+import com.clj.fastbluetooth.callback.BluetoothReadCallback;
 import com.clj.fastbluetooth.callback.BluetoothScanCallback;
+import com.clj.fastbluetooth.callback.BluetoothWriteCallback;
+import com.clj.fastbluetooth.exception.BluetoothException;
+import com.clj.fastbluetooth.util.CycleThread;
 import com.clj.fastbluetooth.utils.BluetoothLog;
 
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
@@ -25,13 +33,13 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
-public class BluetoothScanner {
+public class BluetoothController {
 
     private static final UUID MY_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
 
-    private boolean flag_isSearching = false;                   // 是否处于搜索状态
-
-    private BluetoothScanCallback bluetoothScanCallback;
+    private BluetoothScanCallback mScanCallback;
+    private BluetoothReadCallback mReadCallback;
+    private BluetoothWriteCallback mWriteCallback;
     private String[] names;
     private String mac;
     private long timeout;
@@ -50,32 +58,33 @@ public class BluetoothScanner {
     // 搜索到并筛选出来的蓝牙设备
     private final List<BluetoothDevice> collectionDeviceList = new ArrayList<>();
 
-    // 设备筛选线程标记
-    private boolean flag_collection = false;
+    // 线程标记
+    private boolean flag_isSearching = false;
 
     private static final int BT_START_FAIL = 100;                  // 开启扫描失败
     private static final int BT_START_SUC = 101;                  // 开启扫描失败
-    private static final int BT_SEARCHED = 102;                    // 搜索完成标记
-    private static final int MSG_START_CONNECT = 104;              // 开始连接
-    private static final int MSG_CONNECT_OK = 105;                 // 连接完成
-    private static final int MSG_SOCKET_CONNECT_ERROR = 106;       // socket连接失败
-    private static final int STATE_BLUE_OPEN_FAIL = 107;           // 蓝牙打开失败
+    private static final int BT_SCAN_FINISHED = 102;                    // 搜索完成标记
+    private static final int BT_START_CONNECT = 104;              // 开始连接
+    private static final int BT_CONNECT_OK = 105;                 // 连接完成
+    private static final int BT_CONNECT_ERROR = 106;       // socket连接失败
+    private static final int BT_OPEN_FAIL = 107;           // 蓝牙打开失败
 
     private ScanThread mScanThread = null;
     private CollectionThread mCollectionThread = null;
     private ConnectThread mConnectThread = null;
+    private WriteThread mWriteThread = null;
+    private ReadThread mReadThread = null;
 
     private BluetoothSocket mSocket = null;
 
     private BluetoothDevice mTargetDevice = null;
 
-
-    public static BluetoothScanner getInstance() {
+    public static BluetoothController getInstance() {
         return BluetoothScannerHolder.sBluetoothScanner;
     }
 
     private static class BluetoothScannerHolder {
-        private static final BluetoothScanner sBluetoothScanner = new BluetoothScanner();
+        private static final BluetoothController sBluetoothScanner = new BluetoothController();
     }
 
     public synchronized void scan(String[] names, String mac, long timeout,
@@ -89,11 +98,7 @@ public class BluetoothScanner {
             return;
         }
 
-        if ((names == null || names.length < 1) && (mac == null)) {
-            flag_containScanParams = false;
-        } else {
-            flag_containScanParams = true;
-        }
+        flag_containScanParams = (names != null && names.length >= 1) || (mac != null);
 
         // 如果设置了自动连接，那必须要有搜索条件
         if (autoConnect && !flag_containScanParams) {
@@ -104,17 +109,16 @@ public class BluetoothScanner {
             return;
         }
 
-        flag_isSearching = true;
-        flag_collection = true;
-
         this.names = names;
         this.mac = mac;
         this.timeout = timeout;
         this.autoConnect = autoConnect;
-        this.bluetoothScanCallback = callback;
+        this.mScanCallback = callback;
 
-        searchedDeviceQueue.clear();
-        collectionDeviceList.clear();
+        // 每次开启新的搜索线程，重置参数
+        resetParams();
+
+        flag_isSearching = true;
 
         // 注册蓝牙扫描过程广播监听器
         registerScanReceiver();
@@ -138,13 +142,12 @@ public class BluetoothScanner {
     /**
      * 中断搜索
      */
-    private void cancelScan() {
+    public void cancelScan() {
         // 注销蓝牙广播接收器
         unregisterScanReceiver();
 
         // 标记搜索状态
         flag_isSearching = false;
-        flag_collection = false;
 
         // 关闭搜索
         if (FastBluetooth.getInstance().getBluetoothAdapter() != null
@@ -153,16 +156,57 @@ public class BluetoothScanner {
         }
     }
 
+    private void resetParams() {
+        searchedDeviceQueue.clear();
+        collectionDeviceList.clear();
+        mTargetDevice = null;
+        mSocket = null;
+    }
+
     /**
      * 连接
      */
-    private void connect() {
+    public void connect(BluetoothDevice device) {
         if (mConnectThread != null && mConnectThread.isAlive()) {
             mConnectThread.interrupt();
         }
         mConnectThread = null;
-        mConnectThread = new ConnectThread(mTargetDevice);
+        mConnectThread = new ConnectThread(device);
         mConnectThread.start();
+    }
+
+    /**
+     * 发送数据
+     */
+    public void write(byte[] command, BluetoothWriteCallback callback) {
+        this.mWriteCallback = callback;
+
+        if (mWriteThread != null && mWriteThread.isAlive()) {
+            mWriteThread.interrupt();
+        }
+        mWriteThread = null;
+        mWriteThread = new WriteThread(command);
+        mWriteThread.start();
+    }
+
+    /**
+     * 发送数据
+     */
+    public void read(BluetoothReadCallback callback) {
+        this.mReadCallback = callback;
+
+        if (mReadThread != null && mReadThread.isAlive()) {
+            mReadThread.interrupt();
+        }
+        mReadThread = null;
+        mReadThread = new ReadThread();
+        mReadThread.start();
+    }
+
+    public void stopDataRead() {
+        if (mReadThread != null && mReadThread.isAlive()) {
+            mReadThread.cancel();
+        }
     }
 
     private void registerScanReceiver() {
@@ -197,7 +241,6 @@ public class BluetoothScanner {
                 if (device != null) {
                     if (searchedDeviceQueue.size() < MAX_SIZE) {
                         searchedDeviceQueue.offer(device);
-                        searchedDeviceQueue.notifyAll();
                     }
                 }
             }
@@ -205,9 +248,7 @@ public class BluetoothScanner {
             // 扫描结束
             if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(action)) {
                 BluetoothLog.w("ACTION_DISCOVERY_FINISHED");
-
-                flag_isSearching = false;
-                unregisterScanReceiver();
+                sendMsg(BT_SCAN_FINISHED, null);
             }
         }
     };
@@ -231,15 +272,9 @@ public class BluetoothScanner {
 
             sendMsg(BT_START_SUC, null);
 
-            // 等待搜索结果
-            while (flag_isSearching) {
-                try {
-                    Thread.sleep(200);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
+            if (timeout > 1000) {
+                sendMsgDelayed(BT_SCAN_FINISHED, null, timeout);
             }
-            sendMsg(BT_SEARCHED, null);
         }
     }
 
@@ -249,13 +284,13 @@ public class BluetoothScanner {
     private class CollectionThread extends Thread {
         @Override
         public void run() {
-            while (flag_collection) {
+            while (flag_isSearching) {
                 if (searchedDeviceQueue.size() > 0) {
                     BluetoothDevice device = searchedDeviceQueue.poll();
                     if (device != null && !collectionDeviceList.contains(device)) {
                         collectionDeviceList.add(device);
-                        if (bluetoothScanCallback != null) {
-                            bluetoothScanCallback.onScanning(device);
+                        if (mScanCallback != null) {
+                            mScanCallback.onScanning(device);
                         }
 
                         if (flag_containScanParams) {
@@ -264,26 +299,18 @@ public class BluetoothScanner {
 
                             if (TextUtils.equals(deviceMac, mac)) {
                                 mTargetDevice = device;
-                                cancelScan();
-                                connect();
+                                sendMsg(BT_SCAN_FINISHED, null);
                             } else if (names != null && names.length > 0) {
                                 if (!TextUtils.isEmpty(deviceName)) {
                                     for (String n : names) {
                                         if (TextUtils.equals(n, deviceName)) {
                                             mTargetDevice = device;
-                                            cancelScan();
-                                            connect();
+                                            sendMsg(BT_SCAN_FINISHED, null);
                                         }
                                     }
                                 }
                             }
                         }
-                    }
-                } else {
-                    try {
-                        searchedDeviceQueue.wait();
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
                     }
                 }
             }
@@ -302,13 +329,13 @@ public class BluetoothScanner {
 
         @Override
         public void run() {
-            sendMsg(MSG_START_CONNECT, null);
+            sendMsg(BT_START_CONNECT, null);
 
             // 获取socket的过程
             try {
                 mSocket = mDevice.createRfcommSocketToServiceRecord(MY_UUID);
             } catch (Exception e) {
-                sendMsg(MSG_SOCKET_CONNECT_ERROR, null);
+                sendMsg(BT_CONNECT_ERROR, null);
                 return;
             }
 
@@ -349,11 +376,139 @@ public class BluetoothScanner {
                         }
                     }
                 }
-                sendMsg(MSG_SOCKET_CONNECT_ERROR, null);
+                sendMsg(BT_CONNECT_ERROR, null);
                 return;
             }
 
-            sendMsg(MSG_CONNECT_OK, null);
+            sendMsg(BT_CONNECT_OK, null);
+        }
+    }
+
+    /**
+     * 写
+     */
+    private class WriteThread extends Thread {
+
+        private final byte[] mCommand;
+
+        WriteThread(byte[] command) {
+            mCommand = command;
+        }
+
+        @Override
+        public void run() {
+            super.run();
+            if (mSocket == null || !mSocket.isConnected()) {
+                if (mWriteCallback != null) {
+                    mWriteCallback.onWriteError(new BluetoothException(BluetoothException.ERROR_DISCONNECTION, null));
+                }
+                return;
+            }
+            try {
+                OutputStream os = mSocket.getOutputStream();
+                DataOutputStream dos = new DataOutputStream(os);
+                dos.write(mCommand);
+                dos.flush();
+                os.flush();
+                if (mWriteCallback != null) {
+                    mWriteCallback.onWriteSuccess(mCommand);
+                }
+            } catch (IOException e) {
+                if (mWriteCallback != null) {
+                    mWriteCallback.onWriteError(new BluetoothException(BluetoothException.ERROR_IO, null));
+                }
+            }
+        }
+    }
+
+    /**
+     * 读
+     */
+    private class ReadThread extends CycleThread {
+
+        DataInputStream dis = null;
+        byte[] buffer = new byte[0];
+
+        @Override
+        public void begin() {
+            super.begin();
+            if (mSocket == null || !mSocket.isConnected()) {
+                if (mReadCallback != null) {
+                    mReadCallback.onReadError(new BluetoothException(BluetoothException.ERROR_DISCONNECTION, null));
+                }
+                return;
+            }
+            try {
+                InputStream in = mSocket.getInputStream();
+                dis = new DataInputStream(in);
+            } catch (IOException e) {
+                if (mReadCallback != null) {
+                    mReadCallback.onReadError(new BluetoothException(BluetoothException.ERROR_IO, null));
+                }
+            }
+        }
+
+        @Override
+        public void end() {
+            super.end();
+            if (mSocket.isConnected()) {
+                try {
+                    dis.close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+
+        @Override
+        public void cycle() {
+            super.cycle();
+            if (dis == null) {
+                cancel();
+                return;
+            }
+
+            try {
+                int len = dis.available();
+                if (len == 0) {
+                    if (buffer.length > 0) {
+                        if (mReadCallback != null) {
+                            mReadCallback.onDataReceive(buffer);
+                        }
+                        buffer = new byte[0];
+                    }
+                    try {
+                        Thread.sleep(10);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                } else {
+                    buffer = new byte[len];
+                    dis.read(buffer);
+                }
+
+//                while (len != 0) {
+//                    buffer = new byte[len];
+//                    dis.read(buffer);
+//                    try {
+//                        Thread.sleep(10);
+//                    } catch (InterruptedException e) {
+//                        e.printStackTrace();
+//                    }
+//                    len = dis.available();
+//                }
+//                if (buffer.length > 0) {
+//                    if (mReadCallback != null) {
+//                        mReadCallback.onDataReceive(buffer);
+//                    }
+//                }
+            } catch (IOException e) {
+                cancel();
+                e.printStackTrace();
+                if (mReadCallback != null) {
+                    mReadCallback.onReadError(new BluetoothException(BluetoothException.ERROR_IO, null));
+                }
+            }
         }
     }
 
@@ -361,53 +516,61 @@ public class BluetoothScanner {
         @Override
         public void handleMessage(Message msg) {
             switch (msg.what) {
-                case STATE_BLUE_OPEN_FAIL:
-                    if (bluetoothScanCallback != null) {
-                        bluetoothScanCallback.onBlueNotEnable();
+                case BT_OPEN_FAIL:
+                    if (mScanCallback != null) {
+                        mScanCallback.onBlueNotEnable();
                     }
                     break;
 
                 case BT_START_FAIL:
-                    flag_isSearching = false;
-                    unregisterScanReceiver();
-                    if (bluetoothScanCallback != null) {
-                        bluetoothScanCallback.onScanStarted(false);
+                    cancelScan();
+                    if (mScanCallback != null) {
+                        mScanCallback.onScanStarted(false);
                     }
                     break;
 
                 case BT_START_SUC:
-                    if (bluetoothScanCallback != null) {
-                        bluetoothScanCallback.onScanStarted(true);
+                    if (mScanCallback != null) {
+                        mScanCallback.onScanStarted(true);
                     }
                     break;
 
-                case BT_SEARCHED:
+                case BT_SCAN_FINISHED:
+                    removeMsg(BT_SCAN_FINISHED);
+
+                    // 如果还在搜索，说明是超时了
+                    if (flag_isSearching) {
+                        cancelScan();
+                    }
                     if (flag_containScanParams) {
-                        if (bluetoothScanCallback != null) {
-                            bluetoothScanCallback.onScanFinished(mTargetDevice != null);
+                        if (mScanCallback != null) {
+                            mScanCallback.onScanFinished(mTargetDevice != null);
                         }
                     } else {
-                        if (bluetoothScanCallback != null) {
-                            bluetoothScanCallback.onScanFinished(false);
+                        if (mScanCallback != null) {
+                            mScanCallback.onScanFinished(false);
                         }
                     }
-                    break;
-
-                case MSG_START_CONNECT:
-                    if (bluetoothScanCallback != null) {
-                        bluetoothScanCallback.onStartConnect();
+                    if (autoConnect && mTargetDevice != null) {
+                        connect(mTargetDevice);
                     }
                     break;
 
-                case MSG_SOCKET_CONNECT_ERROR:
-                    if (bluetoothScanCallback != null) {
-                        bluetoothScanCallback.onConnectError();
+                case BT_START_CONNECT:
+                    if (mScanCallback != null) {
+                        mScanCallback.onStartConnect();
                     }
                     break;
 
-                case MSG_CONNECT_OK:
-                    if (bluetoothScanCallback != null) {
-                        bluetoothScanCallback.onConnectSuc();
+                case BT_CONNECT_ERROR:
+                    if (mScanCallback != null) {
+                        mScanCallback.onConnectError();
+                    }
+                    break;
+
+                case BT_CONNECT_OK:
+                    if (mScanCallback != null) {
+                        mScanCallback.onConnectSuc();
                     }
                     break;
 
@@ -415,7 +578,6 @@ public class BluetoothScanner {
                     super.handleMessage(msg);
                     break;
             }
-
         }
     };
 
