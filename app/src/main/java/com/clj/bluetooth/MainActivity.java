@@ -11,7 +11,6 @@ import android.content.pm.PackageManager;
 import android.location.LocationManager;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Handler;
 import android.provider.Settings;
 import android.util.Log;
 import android.view.View;
@@ -22,13 +21,8 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import com.clj.fastbluetooth.FastBluetooth;
-import com.clj.fastbluetooth.callback.BluetoothReadCallback;
 import com.clj.fastbluetooth.callback.BluetoothScanCallback;
-import com.clj.fastbluetooth.callback.BluetoothWriteCallback;
-import com.clj.fastbluetooth.exception.BluetoothException;
-import com.clj.fastbluetooth.util.ConvertUtils;
 
-import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -45,62 +39,25 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
 
         FastBluetooth.getInstance().init(getApplication());
-
-        new Handler().postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                checkPermissions();
-            }
-        }, 2000);
-
-        findViewById(R.id.btn_write).setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                FastBluetooth.getInstance().write(ConvertUtils.string2Bytes("abcdefg"), new BluetoothWriteCallback() {
-                    @Override
-                    public void onWriteError(BluetoothException e) {
-                        Log.e(TAG, "onWriteError");
-                    }
-
-                    @Override
-                    public void onWriteSuccess(byte[] data) {
-                        Log.e(TAG, "onWriteSuccess");
-                    }
-                });
-            }
-        });
-
-        findViewById(R.id.btn_read).setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                FastBluetooth.getInstance().openDataRead(new BluetoothReadCallback() {
-                    @Override
-                    public void onReadError(BluetoothException e) {
-                        Log.e(TAG, "onReadError");
-                    }
-
-                    @Override
-                    public void onDataReceive(byte[] data) {
-                        Log.e(TAG, "onDataReceive: " + new String(data, Charset.defaultCharset()));
-                    }
-                });
-            }
-        });
-
-        findViewById(R.id.btn_stop).setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                FastBluetooth.getInstance().stopDataRead();
-            }
-        });
+        initView();
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        FastBluetooth.getInstance().destroy();
     }
 
-    private void test() {
+    private void initView() {
+        findViewById(R.id.btn_scan).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                checkPermissions();
+            }
+        });
+    }
+
+    private void startScan() {
         FastBluetooth.getInstance().scanAndConnect(new String[]{"BRT2021040001"}, null, -1, new BluetoothScanCallback() {
             @Override
             public void onBlueNotEnable() {
@@ -163,41 +120,39 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void onPermissionGranted(String permission) {
-        switch (permission) {
-            case Manifest.permission.ACCESS_FINE_LOCATION:
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !checkGPSIsOpen()) {
-                    new AlertDialog.Builder(this)
-                            .setTitle(R.string.notifyTitle)
-                            .setMessage(R.string.gpsNotifyMsg)
-                            .setNegativeButton(R.string.cancel,
-                                    new DialogInterface.OnClickListener() {
-                                        @Override
-                                        public void onClick(DialogInterface dialog, int which) {
-                                            finish();
-                                        }
-                                    })
-                            .setPositiveButton(R.string.setting,
-                                    new DialogInterface.OnClickListener() {
-                                        @Override
-                                        public void onClick(DialogInterface dialog, int which) {
-                                            Intent intent = new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS);
-                                            startActivityForResult(intent, REQUEST_CODE_OPEN_GPS);
-                                        }
-                                    })
-
-                            .setCancelable(false)
-                            .show();
-                } else {
-                    test();
-                }
-                break;
+        if (Manifest.permission.ACCESS_FINE_LOCATION.equals(permission)) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !checkGPSIsOpen()) {
+                new AlertDialog.Builder(this)
+                        .setTitle(R.string.notifyTitle)
+                        .setMessage(R.string.gpsNotifyMsg)
+                        .setNegativeButton(R.string.cancel,
+                                new DialogInterface.OnClickListener() {
+                                    @Override
+                                    public void onClick(DialogInterface dialog, int which) {
+                                        finish();
+                                    }
+                                })
+                        .setPositiveButton(R.string.setting,
+                                new DialogInterface.OnClickListener() {
+                                    @Override
+                                    public void onClick(DialogInterface dialog, int which) {
+                                        Intent intent = new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS);
+                                        startActivityForResult(intent, REQUEST_CODE_OPEN_GPS);
+                                    }
+                                })
+                        .setCancelable(false)
+                        .show();
+            } else {
+                startScan();
+            }
         }
     }
 
     private boolean checkGPSIsOpen() {
         LocationManager locationManager = (LocationManager) this.getSystemService(Context.LOCATION_SERVICE);
-        if (locationManager == null)
+        if (locationManager == null) {
             return false;
+        }
         return locationManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER);
     }
 
